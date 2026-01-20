@@ -459,7 +459,7 @@ const profile = {
 
     let stopped = false;
     const HEARTBEAT_MS = 5000;
-    const ACTIVE_WINDOW_MS = 5000;
+    const ACTIVE_WINDOW_MS = 15000;
 
     const heartbeat = async () => {
       if (!currentUser || stopped) return;
@@ -752,24 +752,29 @@ const profile = {
 
   const handleEditProfile = async () => {
   try {
-    // 🚫 trava qualquer effect que ainda tente rodar
     isLoggingOutRef.current = true;
 
-    // mata estado local imediatamente
+    if (currentUser?.id) {
+      // 👇 GARANTE que o user morre no DB
+      await supabase
+        .from('profiles')
+        .update({
+          is_present: false,
+          last_seen_at: new Date(0).toISOString(), // força sair da janela ativa
+        })
+        .eq('id', currentUser.id);
+    }
+
     setCurrentUser(null);
-
-    // limpa sessão da noite
     sessionStorage.clear();
-
-    // desloga do Supabase
     await supabase.auth.signOut();
-  } catch {
-    // ignore
+  } catch (e) {
+    console.error('logout error', e);
   }
 
-  // reload limpo
   window.location.reload();
 };
+
 
 // ---------------------------
 // BOOT GATE (evita pulo de telas)
