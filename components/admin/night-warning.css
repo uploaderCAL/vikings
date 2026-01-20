@@ -1,0 +1,38 @@
+.night-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.night-modal {
+  background: white;
+  padding: 24px;
+  border-radius: 16px;
+  width: 90%;
+  max-width: 320px;
+  text-align: center;
+}
+
+.night-modal h3 {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.night-modal p {
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.night-modal button {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-weight: bold;
+  cursor: pointer;
+}

@@ -1,0 +1,7 @@
+{
+  "name": "Social Pub Live",
+  "description": "Plataforma social exclusiva para eventos presenciais com compartilhamento seguro e privacidade garantida.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
