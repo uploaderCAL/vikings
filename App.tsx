@@ -454,27 +454,40 @@ const profile = {
   // ---------------------------
   // 4) Presence REAL (heartbeat + filter by last_seen_at)
   // ---------------------------
+  const heartbeat = async () => {
+  if (!currentUser) return;
+
+  try {
+    await supabase
+      .from('profiles')
+      .update({
+        last_seen_at: new Date().toISOString(),
+        is_present: true,
+      })
+      .eq('id', currentUser.id);
+  } catch (e) {
+    console.error('heartbeat error:', e);
+  }
+};
+
+
   useEffect(() => {
-    if (!currentUser || isLoggingOutRef.current) return;
+  if (!currentUser || isLoggingOutRef.current) return;
 
-    let stopped = false;
-    const HEARTBEAT_MS = 5000;
-    const ACTIVE_WINDOW_MS = 15000;
+  let stopped = false;
 
-    const heartbeat = async () => {
-      if (!currentUser || stopped) return;
-      try {
-        await supabase
-          .from('profiles')
-          .update({
-            last_seen_at: new Date().toISOString(),
-            is_present: true,
-          })
-          .eq('id', currentUser.id);
-      } catch (e) {
-        console.error('heartbeat error:', e);
-      }
-    };
+  const interval = setInterval(() => {
+    if (stopped) return;
+    heartbeat();
+    loadUsers();
+  }, HEARTBEAT_MS);
+
+  return () => {
+    stopped = true;
+    clearInterval(interval);
+  };
+}, [currentUser]);
+
 
     const loadUsers = async () => {
       if (!currentUser || stopped) return;
