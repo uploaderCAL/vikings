@@ -38,7 +38,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // Presence constants
 // ---------------------------
 const HEARTBEAT_MS = 5000;      // atualiza presença a cada 5s
-const ACTIVE_WINDOW_MS = 15000; // considera online se visto nos últimos 15s
+const ACTIVE_WINDOW_MS = 20000; // considera online se visto nos últimos 20s (aumentado para evitar fantasmas)
 
 // ---------------------------
 // Helpers: mapeamento DB <-> UI
@@ -482,6 +482,7 @@ const profile = {
   // Ref para controlar debounce e evitar flickering
   const usersRef = useRef<User[]>([]);
   const loadUsersTimeoutRef = useRef<number | null>(null);
+  const lastSeenMapRef = useRef<Map<string, number>>(new Map()); // Rastreia quando cada user foi visto
 
   useEffect(() => {
     if (!currentUser || isLoggingOutRef.current) return;
@@ -493,25 +494,60 @@ const profile = {
       try {
         const cutoff = new Date(Date.now() - ACTIVE_WINDOW_MS).toISOString();
 
+        // Query com filtro duplo: is_present E last_seen_at recente
         const { data, error } = await supabase
           .from('profiles')
           .select('*')
+          .eq('is_present', true)
           .gte('last_seen_at', cutoff);
 
         if (error) throw error;
 
         const rows = (data || []) as ProfileRow[];
+        const now = Date.now();
+
+        // Atualiza o mapa de "última vez visto" para cada usuário
+        rows.forEach(p => {
+          if (p.id !== currentUser.id) {
+            lastSeenMapRef.current.set(p.id, now);
+          }
+        });
+
+        // Considera como online: usuários que apareceram na query OU
+        // que foram vistos nos últimos 10 segundos (grace period)
+        const GRACE_PERIOD = 10000; // 10 segundos de tolerância
+
         const newList = rows
           .filter(p => p.id !== currentUser.id)
           .map(toUserUI);
 
-        // Só atualiza se houver mudança real (evita flickering)
-        const currentIds = usersRef.current.map(u => u.id).sort().join(',');
-        const newIds = newList.map(u => u.id).sort().join(',');
+        // IDs que vieram na query atual
+        const queryIds = new Set(newList.map(u => u.id));
 
-        if (currentIds !== newIds) {
-          usersRef.current = newList;
-          setUsers(newList);
+        // Mantém usuários que sumiram mas ainda estão no grace period
+        const usersInGrace = usersRef.current.filter(u => {
+          if (queryIds.has(u.id)) return false; // Já está na nova lista
+          const lastSeen = lastSeenMapRef.current.get(u.id);
+          return lastSeen && (now - lastSeen) < GRACE_PERIOD;
+        });
+
+        // Lista final: novos + em grace period
+        const finalList = [...newList, ...usersInGrace];
+
+        // Limpa usuários muito antigos do mapa
+        for (const [id, time] of lastSeenMapRef.current.entries()) {
+          if (now - time > ACTIVE_WINDOW_MS * 2) {
+            lastSeenMapRef.current.delete(id);
+          }
+        }
+
+        // Só atualiza se houver mudança real
+        const currentIds = usersRef.current.map(u => u.id).sort().join(',');
+        const finalIds = finalList.map(u => u.id).sort().join(',');
+
+        if (currentIds !== finalIds) {
+          usersRef.current = finalList;
+          setUsers(finalList);
         }
       } catch (e) {
         console.error('loadUsers error:', e);
