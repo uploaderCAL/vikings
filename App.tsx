@@ -17,6 +17,7 @@ import { PeopleList } from './components/PeopleList';
 import { ChatList } from './components/ChatList';
 import { ChatView } from './components/ChatView';
 import { AdminDashboard } from './components/AdminDashboard';
+import { EditProfileModal } from './components/EditProfileModal';
 
 import { createClient } from '@supabase/supabase-js';
 
@@ -33,6 +34,11 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// ---------------------------
+// Presence constants
+// ---------------------------
+const HEARTBEAT_MS = 5000;      // atualiza presença a cada 5s
+const ACTIVE_WINDOW_MS = 15000; // considera online se visto nos últimos 15s
 
 // ---------------------------
 // Helpers: mapeamento DB <-> UI
@@ -189,6 +195,8 @@ useEffect(() => {
   const isLoggingOutRef = useRef(false);
 
   const [isBooting, setIsBooting] = useState(true);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
 
   const longPressTimer = useRef<number | null>(null);
 
@@ -472,22 +480,9 @@ const profile = {
 
 
   useEffect(() => {
-  if (!currentUser || isLoggingOutRef.current) return;
+    if (!currentUser || isLoggingOutRef.current) return;
 
-  let stopped = false;
-
-  const interval = setInterval(() => {
-    if (stopped) return;
-    heartbeat();
-    loadUsers();
-  }, HEARTBEAT_MS);
-
-  return () => {
-    stopped = true;
-    clearInterval(interval);
-  };
-}, [currentUser]);
-
+    let stopped = false;
 
     const loadUsers = async () => {
       if (!currentUser || stopped) return;
@@ -533,7 +528,6 @@ const profile = {
 
     const onBeforeUnload = () => {
       try {
-        // best effort (não confie 100% nisso)
         supabase
           .from('profiles')
           .update({ is_present: false })
@@ -760,33 +754,91 @@ const profile = {
   };
 
     // ---------------------------
-  // 9) Edit profile
+  // 9) Edit profile (abre modal)
   // ---------------------------
 
-  const handleEditProfile = async () => {
-  try {
-    isLoggingOutRef.current = true;
+  const handleEditProfile = () => {
+    setShowEditProfile(true);
+  };
 
-    if (currentUser?.id) {
-      // 👇 GARANTE que o user morre no DB
-      await supabase
+  // ---------------------------
+  // 10) Save profile changes
+  // ---------------------------
+  const handleSaveProfile = async (data: {
+    nickname: string;
+    gender: Gender;
+    visibility: VisibilityPreference;
+    newAvatar?: string;
+  }) => {
+    if (!currentUser) return;
+
+    setIsSavingProfile(true);
+
+    try {
+      let avatarUrl = currentUser.avatar;
+
+      // Se tiver nova imagem, faz upload
+      if (data.newAvatar) {
+        avatarUrl = await uploadAvatar(data.newAvatar, currentUser.id);
+      }
+
+      // Atualiza no banco
+      const { error } = await supabase
         .from('profiles')
         .update({
-          is_present: false,
-          last_seen_at: new Date(0).toISOString(), // força sair da janela ativa
+          nickname: data.nickname,
+          gender: data.gender,
+          visibility: data.visibility,
+          avatar_url: avatarUrl,
         })
         .eq('id', currentUser.id);
+
+      if (error) throw error;
+
+      // Atualiza estado local
+      setCurrentUser({
+        ...currentUser,
+        nickname: data.nickname,
+        gender: data.gender,
+        visibility: data.visibility,
+        avatar: avatarUrl,
+      });
+
+      setShowEditProfile(false);
+      Haptics.light();
+    } catch (e) {
+      console.error('Save profile error:', e);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  // ---------------------------
+  // 11) Logout
+  // ---------------------------
+  const handleLogout = async () => {
+    try {
+      isLoggingOutRef.current = true;
+
+      if (currentUser?.id) {
+        await supabase
+          .from('profiles')
+          .update({
+            is_present: false,
+            last_seen_at: new Date(0).toISOString(),
+          })
+          .eq('id', currentUser.id);
+      }
+
+      setCurrentUser(null);
+      sessionStorage.clear();
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error('logout error', e);
     }
 
-    setCurrentUser(null);
-    sessionStorage.clear();
-    await supabase.auth.signOut();
-  } catch (e) {
-    console.error('logout error', e);
-  }
-
-  window.location.reload();
-};
+    window.location.reload();
+  };
 
 
 // ---------------------------
@@ -980,6 +1032,17 @@ if (isBooting) {
             if (longPressTimer.current) clearTimeout(longPressTimer.current);
             longPressTimer.current = null;
           }}
+        />
+      )}
+
+      {/* Edit Profile Modal */}
+      {showEditProfile && currentUser && (
+        <EditProfileModal
+          user={currentUser}
+          onSave={handleSaveProfile}
+          onCancel={() => setShowEditProfile(false)}
+          onLogout={handleLogout}
+          isSaving={isSavingProfile}
         />
       )}
     </Layout>

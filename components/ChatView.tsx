@@ -101,7 +101,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
   if (!stableOtherUser || !STORAGE_KEY) return;
 
   // 🔒 só salva se vier do perfil real
-  const realAvatar = stableOtherUser.avatar_url?.trim();
+  const realAvatar = (stableOtherUser as any).avatar?.trim() || (stableOtherUser as any).avatar_url?.trim();
   const realName = stableOtherUser.nickname?.trim();
 
   if (!realAvatar && !realName) return;
@@ -123,7 +123,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
  React.useEffect(() => {
   // 1️⃣ prioridade: perfil real vindo do banco
   if (stableOtherUser) {
-    const realAvatar = stableOtherUser.avatar_url?.trim();
+    const realAvatar = (stableOtherUser as any).avatar?.trim() || (stableOtherUser as any).avatar_url?.trim();
     const realName = stableOtherUser.nickname?.trim();
 
     if (realAvatar) setAvatarSrc(realAvatar);
