@@ -479,6 +479,10 @@ const profile = {
 };
 
 
+  // Ref para controlar debounce e evitar flickering
+  const usersRef = useRef<User[]>([]);
+  const loadUsersTimeoutRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (!currentUser || isLoggingOutRef.current) return;
 
@@ -497,24 +501,39 @@ const profile = {
         if (error) throw error;
 
         const rows = (data || []) as ProfileRow[];
-        const list = rows
+        const newList = rows
           .filter(p => p.id !== currentUser.id)
           .map(toUserUI);
 
-        setUsers(list);
+        // Só atualiza se houver mudança real (evita flickering)
+        const currentIds = usersRef.current.map(u => u.id).sort().join(',');
+        const newIds = newList.map(u => u.id).sort().join(',');
+
+        if (currentIds !== newIds) {
+          usersRef.current = newList;
+          setUsers(newList);
+        }
       } catch (e) {
         console.error('loadUsers error:', e);
       }
     };
 
-    // realtime profiles (opcional; polling garante)
+    // Debounced loadUsers para evitar chamadas muito frequentes
+    const debouncedLoadUsers = () => {
+      if (loadUsersTimeoutRef.current) {
+        clearTimeout(loadUsersTimeoutRef.current);
+      }
+      loadUsersTimeoutRef.current = window.setTimeout(loadUsers, 500);
+    };
+
+    // realtime profiles - com debounce
     const channel = supabase
       .channel('presence_profiles')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'profiles' },
         () => {
-          loadUsers();
+          debouncedLoadUsers();
         }
       )
       .subscribe();
@@ -524,7 +543,7 @@ const profile = {
     loadUsers();
 
     const hb = setInterval(heartbeat, HEARTBEAT_MS);
-    const poll = setInterval(loadUsers, 3000);
+    const poll = setInterval(loadUsers, 5000); // Aumentado de 3s para 5s
 
     const onBeforeUnload = () => {
       try {
@@ -540,6 +559,9 @@ const profile = {
       stopped = true;
       clearInterval(hb);
       clearInterval(poll);
+      if (loadUsersTimeoutRef.current) {
+        clearTimeout(loadUsersTimeoutRef.current);
+      }
       window.removeEventListener('beforeunload', onBeforeUnload);
       supabase.removeChannel(channel);
     };
@@ -639,7 +661,12 @@ const profile = {
   }, [currentUser]);
 
   // ---------------------------
-  // 6) Start conversation REAL
+  // 6) Estado para chat pendente (antes de criar thread)
+  // ---------------------------
+  const [pendingChatUser, setPendingChatUser] = useState<User | null>(null);
+
+  // ---------------------------
+  // 7) Start conversation - só abre chat, não cria thread ainda
   // ---------------------------
   const startConversation = async (target: User) => {
     if (!currentUser) return;
@@ -648,50 +675,55 @@ const profile = {
     const existing = threads.find(t => t.participants.includes(target.id));
     if (existing) {
       setActiveChatId(existing.id);
+      setPendingChatUser(null);
       setActiveTab('chat_view');
       return;
     }
 
-    try {
-      const now = new Date().toISOString();
-
-      const { data: inserted, error } = await supabase
-        .from('threads')
-        .insert({
-          user_a: currentUser.id,
-          user_b: target.id,
-          status: 'pending',
-          last_activity: now,
-          is_typing_a: false,
-          is_typing_b: false,
-        })
-        .select('*')
-        .single();
-
-      if (error) throw error;
-      if (!inserted?.id) throw new Error('Falha ao criar conversa');
-
-      setActiveChatId(inserted.id);
-      setActiveTab('chat_view');
-
-      Haptics.light();
-    } catch (e) {
-      console.error('startConversation error:', e);
-    }
+    // Não cria thread ainda - só abre o chat em modo "pendente"
+    setPendingChatUser(target);
+    setActiveChatId(null);
+    setActiveTab('chat_view');
+    Haptics.light();
   };
 
   // ---------------------------
-  // 7) Send message REAL (no bot)
+  // 8) Send message REAL - cria thread na primeira mensagem
   // ---------------------------
   const sendMessage = async (text: string) => {
-    const threadId = activeChatId;
-    if (!threadId || !currentUser) return;
+    if (!currentUser) return;
 
     const trimmed = (text || '').trim();
     if (!trimmed) return;
 
     try {
       const now = new Date().toISOString();
+      let threadId = activeChatId;
+
+      // Se não tem thread ainda mas tem usuário pendente, cria agora
+      if (!threadId && pendingChatUser) {
+        const { data: inserted, error: insertErr } = await supabase
+          .from('threads')
+          .insert({
+            user_a: currentUser.id,
+            user_b: pendingChatUser.id,
+            status: 'pending',
+            last_activity: now,
+            is_typing_a: false,
+            is_typing_b: false,
+          })
+          .select('*')
+          .single();
+
+        if (insertErr) throw insertErr;
+        if (!inserted?.id) throw new Error('Falha ao criar conversa');
+
+        threadId = inserted.id;
+        setActiveChatId(threadId);
+        setPendingChatUser(null);
+      }
+
+      if (!threadId) return;
 
       const { error: msgErr } = await supabase
         .from('messages')
@@ -1001,13 +1033,18 @@ if (isBooting) {
         />
       )}
 
-      {activeTab === 'chat_view' && activeChatId && (
+      {activeTab === 'chat_view' && (activeChatId || pendingChatUser) && (
         <ChatView
           nightConfig={nightConfig}
-          thread={threads.find(t => t.id === activeChatId)!}
+          thread={activeChatId ? threads.find(t => t.id === activeChatId) : null}
+          pendingUser={pendingChatUser}
           users={users}
           currentUserId={currentUser.id}
-          onBack={() => setActiveTab('chats')}
+          onBack={() => {
+            setActiveTab('people');
+            setPendingChatUser(null);
+            setActiveChatId(null);
+          }}
           onBlock={blockUser}
           onSendMessage={sendMessage}
           onAccept={async id => {

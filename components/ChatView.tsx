@@ -5,6 +5,7 @@ import { UI_STRINGS } from '../constants/index';
 interface ChatViewProps {
   nightConfig: { isNightOn: boolean };
   thread?: Thread | null;
+  pendingUser?: User | null;  // usuário selecionado mas ainda sem thread
   users: User[];
   currentUserId: string;
   onBack: () => void;
@@ -21,6 +22,7 @@ interface ChatViewProps {
 export const ChatView: React.FC<ChatViewProps> = ({
   nightConfig,
   thread,
+  pendingUser,
   users,
   currentUserId,
   onBack,
@@ -48,9 +50,11 @@ export const ChatView: React.FC<ChatViewProps> = ({
   }
 
   /* ===========================
-     PROTEÇÃO CRÍTICA
+     PROTEÇÃO CRÍTICA - permite pendingUser sem thread
      =========================== */
-  if (!thread || !thread.participants || thread.participants.length < 2) {
+  const isPendingMode = !thread && !!pendingUser;
+
+  if (!thread && !pendingUser) {
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-white max-w-md mx-auto">
         <div className="text-sm text-gray-500 font-medium">
@@ -60,7 +64,9 @@ export const ChatView: React.FC<ChatViewProps> = ({
     );
   }
 
-  const otherId = thread.participants.find(id => id !== currentUserId);
+  const otherId = isPendingMode
+    ? pendingUser?.id
+    : thread?.participants?.find(id => id !== currentUserId);
 
   /* ===========================
      USUÁRIO ESTÁVEL (ONLINE)
@@ -201,7 +207,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
               {displayName}
             </span>
 
-            {thread.isOtherTyping && (
+            {thread?.isOtherTyping && (
               <span className="text-[10px] text-blue-500 animate-pulse">
                 digitando...
               </span>
@@ -221,8 +227,13 @@ export const ChatView: React.FC<ChatViewProps> = ({
 
       {/* MESSAGES */}
       <div className="flex-1 overflow-y-auto p-4 bg-gray-50 space-y-4">
-        {thread.status === 'pending' &&
-        thread.participants[1] === currentUserId ? (
+        {isPendingMode ? (
+          /* Modo pendente - sem thread ainda, mostra convite para iniciar conversa */
+          <div className="flex flex-col items-center justify-center h-full text-center text-gray-400">
+            <p className="text-sm mb-2">Inicie uma conversa com {displayName}</p>
+            <p className="text-xs">Envie uma mensagem para começar!</p>
+          </div>
+        ) : thread?.status === 'pending' && thread?.participants[1] === currentUserId ? (
           <div className="bg-white p-6 rounded-xl border text-center space-y-4">
             <p className="text-sm text-gray-600">
               Você recebeu uma solicitação
@@ -235,7 +246,7 @@ export const ChatView: React.FC<ChatViewProps> = ({
             </button>
           </div>
         ) : (
-          thread.messages?.map(msg => (
+          thread?.messages?.map(msg => (
             <div
               key={msg.id}
               className={`flex ${
@@ -267,10 +278,10 @@ export const ChatView: React.FC<ChatViewProps> = ({
         )}
       </div>
 
-      {/* INPUT */}
-      {(thread.status === 'accepted' ||
-        (thread.status === 'pending' &&
-          thread.participants[0] === currentUserId)) ? (
+      {/* INPUT - sempre mostra no modo pendente ou quando tem permissão */}
+      {(isPendingMode ||
+        thread?.status === 'accepted' ||
+        (thread?.status === 'pending' && thread?.participants[0] === currentUserId)) ? (
         <div className="p-4 border-t flex space-x-2">
           <input
             className="flex-1 border rounded-lg p-3 text-base"
